@@ -1,6 +1,7 @@
 # testproject
 
 1. Диаграмма компонентов в PlantUML:
+```
 @startuml
 [Клиент] --> [Веб-сервер]
 note right of [Клиент]
@@ -19,8 +20,10 @@ note left of [База данных]
   Хранение чисел
 end note
 @enduml
+```
 
 2. Диаграмма последовательности в PlantUML:
+```
 @startuml
 actor Клиент
 participant "Веб-Сервер" as WS
@@ -50,6 +53,7 @@ else Число не существует
 end
 
 @enduml
+```
 
 3. Дополнение по пункту 3
 - Фронтенд JS - фреймворк Vue
