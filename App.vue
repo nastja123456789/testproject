@@ -33,7 +33,7 @@ export default {
         if (err.response) {
           this.error = err.response.data.error;
         } else {
-          this.error = 'An unexpected error occurred.';
+          this.error = 'Ошибка отправки числа/получения ответа от сервера.';
         }
       }
     }
