@@ -1,0 +1,121 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mariadb-deployment
+  namespace: ns-02
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mariadb
+  template:
+    metadata:
+      labels:
+        app: mariadb
+    spec:
+      containers:
+      - name: mariadb
+        image: mariadb:10.11
+        ports:
+        - containerPort: 3306
+        env:
+          - name: MYSQL_ROOT_PASSWORD
+            value: "user"
+          - name: MYSQL_DATABASE
+            value: "test"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mariadb-service
+  namespace: ns-02
+spec:
+  selector:
+    app: mariadb
+  ports:
+    - protocol: TCP
+      port: 3306
+      targetPort: 3306
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app-deployment
+  namespace: ns-02
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: achieve3-server
+  template:
+    metadata:
+      labels:
+        app: achieve3-server
+    spec:
+      containers:
+      - name: achieve3-server
+        image: nastja2001/achieve3_server_app
+        ports:
+        - containerPort: 5000
+        env:
+          - name: MYSQL_HOST
+            value: mariadb-service
+          - name: MYSQL_USER
+            value: root
+          - name: MYSQL_PASSWORD
+            value: user
+          - name: MYSQL_DATABASE
+            value: test
+          - name: MYSQL_PORT
+            value: "3306"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: app-service
+  namespace: ns-02
+spec:
+  selector:
+    app: achieve3-server
+  ports:
+    - protocol: TCP
+      port: 5000
+      targetPort: 5000
+  type: NodePort
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend-deployment
+  namespace: ns-02
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: achieve3-frontend
+  template:
+    metadata:
+      labels:
+        app: achieve3-frontend
+    spec:
+      containers:
+      - name: achieve3-frontend
+        image: nastja2001/achieve3_client_app
+        ports:
+        - containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-service
+  namespace: ns-02
+spec:
+  selector:
+    app: achieve3-frontend
+  ports:
+    - protocol: TCP
+      port: 8080
+      targetPort: 8080
+  type: NodePort
