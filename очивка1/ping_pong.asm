@@ -1,147 +1,153 @@
-;======================================
-; Пример работы с двумя таймерами (Atmega8)
-;  Вывод "ping" и "pong" в USART с разными интервалами
-;======================================
-.include "m8def.inc"   ; Подключаем определения для ATmega8
+.include "m8def.inc"
 
-.def  temp      = r16    ; Временный регистр
-.def  str_ptr_hi = r24   ; Регистр для старшей части указателя на строку
-.def  str_ptr_lo = r25   ; Регистр для младшей части указателя на строку
+.def temp = r16
+.def temp2 = r17
+.def isr_flag = r18 ; Flag to indicate which ISR to execute
 
 ;--------------------------------------
-; Константы
-.equ F_CPU      = 1000000      ; Частота (1 MHz)
-.equ BAUD       = 9600        ; Скорость передачи данных
-.equ UBRR_VALUE = (F_CPU/(16*BAUD))-1   ; Значение для регистра UBRR
+; Constants
+.equ F_CPU = 1000000 ; Frequency (1 MHz)
+.equ BAUD = 9600
+.equ UBRR_VALUE = (F_CPU / (16 * BAUD)) - 1
 
-; Интервалы таймеров. 
-; Значения OCRx_VAL выбраны исходя из делителя тактовой частоты и
-; желаемого интервала. 
-.equ TIMER1_INTERVAL = 488  ; Значение для таймера 1
-.equ TIMER2_INTERVAL = 244  ; Значение для таймера 2
-
-
-;--------------------------------------
-; Секция кода
+.equ OCR1A_VAL = 488
+.equ OCR2_VAL = 244
+.equ TIMER1_FLAG = 0x01
+.equ TIMER2_FLAG = 0x02
+;---------------------------------------
 .cseg
-
 .org 0x0000
-    rjmp reset    ; Переход на метку RESET при старте программы
+rjmp RESET
 
-.org OC2addr     ; Вектор прерывания от таймера 2
-    rjmp timer2_isr  ; Переход на обработчик прерывания таймера 2
+;--------------------------------------
+; Interrupt Vector Table (now redirects to common ISR handler)
+.org OC2addr
+rjmp COMMON_ISR
+.org OC1Aaddr
+rjmp COMMON_ISR
 
-.org OC1Aaddr    ; Вектор прерывания от таймера 1
-    rjmp timer1_isr  ; Переход на обработчик прерывания таймера 1
 
-
-reset:
-    ; Инициализация портов ввода/вывода
+;---------------------------------------
+RESET:
     ldi temp, 0x00
-    out DDRB, temp  ; Порт B как вход
-    out DDRC, temp  ; Порт C как вход
-    out DDRD, temp  ; Порт D как вход
+    out DDRB, temp
+    out DDRC, temp
+    out DDRD, temp
 
-    ; Инициализация USART
     ldi temp, UBRR_VALUE
-    out UBRRL, temp    ; Запись младшего байта скорости в регистр UBRRL
+    out UBRRL, temp
     ldi temp, 0
-    out UBRRH, temp    ; Запись старшего байта скорости в регистр UBRRH
-    ldi temp, (1<<RXEN)|(1<<TXEN)
-    out UCSRB, temp    ; Включение приемника и передатчика
-    ldi temp, (1<<URSEL)|(3<<UCSZ0)
-    out UCSRC, temp    ; Установка формата кадра данных (8 бит)
+    out UBRRH, temp
+    ldi temp, (1 << RXEN) | (1 << TXEN)
+    out UCSRB, temp
+    ldi temp, (1 << URSEL) | (3 << UCSZ0)
+    out UCSRC, temp
 
-    ; Инициализация таймера 1
-    ldi temp, high(TIMER1_INTERVAL)
-    out OCR1AH, temp    ; Запись старшего байта значения сравнения
-    ldi temp, low(TIMER1_INTERVAL)
-    out OCR1AL, temp    ; Запись младшего байта значения сравнения
+    ; Timer1 Setup
+    ldi temp, high(OCR1A_VAL)
+    out OCR1AH, temp
+    ldi temp, low(OCR1A_VAL)
+    out OCR1AL, temp
 
-    ldi temp, (1<<WGM12)
-    out TCCR1B, temp    ; Установка режима CTC (сброс таймера по совпадению)
-    ldi temp, (1<<CS12)|(1<<CS10)
-    out TCCR1B, temp    ; Установка делителя частоты (1024)
+    ldi temp, (1 << WGM12)
+    out TCCR1B, temp
+    ldi temp, (1 << CS12) | (1 << CS10)
+    out TCCR1B, temp
+    ldi temp, (1 << OCIE1A)
+    out TIMSK, temp
 
-    ldi temp, (1<<OCIE1A)
-    out TIMSK, temp    ; Разрешение прерывания по совпадению таймера 1
 
-    ; Инициализация таймера 2
-    ldi temp, TIMER2_INTERVAL
-    out OCR2, temp       ; Запись значения сравнения в регистр OCR2
-    ldi temp, (1<<WGM21)|(1<<CS22)|(1<<CS21)|(1<<CS20)
-    out TCCR2, temp    ; Установка режима CTC и делителя частоты (1024)
+    ; Timer2 Setup
+    ldi temp, OCR2_VAL
+    out OCR2, temp
+    ldi temp, (1 << WGM21) | (1 << CS22) | (1 << CS21) | (1 << CS20)
+    out TCCR2, temp
     in temp, TIMSK
-    ori temp, (1<<OCIE2)
-    out TIMSK, temp      ; Разрешение прерывания по совпадению таймера 2
-
-    sei          ; Разрешение глобальных прерываний
+    ori temp, (1 << OCIE2)
+    out TIMSK, temp
+    
+    ldi isr_flag, 0x00;reset isr flags
+    sei
 
 main_loop:
-    rjmp main_loop   ; Бесконечный цикл
+    rjmp main_loop
 
 ;--------------------------------------
-; Функции отправки в USART
-;--------------------------------------
+; USART Functions
 send_char:
     sbis UCSRA, UDRE
-    rjmp send_char      ; Ожидание готовности буфера передачи
-    out  UDR, str_ptr_hi  ; Отправка байта (символа)
+    rjmp send_char
+    out UDR, r24 ; Send byte in R24
     ret
 
 send_string:
 next_char:
-    lpm str_ptr_hi, Z+     ; Загрузка символа из памяти программ в r24
-    tst str_ptr_hi       ; Проверка на нулевой символ (конец строки)
-    breq done_string    ; Если ноль - переход в конец
-    rcall send_char       ; Отправка символа в USART
-    rjmp next_char     ; Переход к следующему символу
+    lpm r24, Z+
+    tst r24
+    breq done_string
+    rcall send_char
+    rjmp next_char
 done_string:
-    ret          ; Возврат из подпрограммы
+    ret
 
-;--------------------------------------
-; Строки для вывода
-;--------------------------------------
+;---------------------------------------
+; String data
 ping_str:
-    .db "ping\r\n", 0  ; Строка для таймера 1
+    .db "ping\r\n", 0
 pong_str:
-    .db "pong\r\n", 0  ; Строка для таймера 2
+    .db "pong\r\n", 0
 
-;--------------------------------------
-; Обработчики прерываний
-;--------------------------------------
-timer1_isr:
-    push str_ptr_hi     ; Сохранение регистров в стеке
-    push str_ptr_lo
+
+;---------------------------------------
+; Common ISR Handler
+COMMON_ISR:
+    push r16
+    push r17
+    push r18
+    push r24
+    push r25
     push ZH
     push ZL
 
-    ldi str_ptr_hi, high(ping_str*2) ; Загрузка адреса строки "ping\r\n"
-    ldi str_ptr_lo, low(ping_str*2)
-    mov ZH, str_ptr_hi
-    mov ZL, str_ptr_lo
-    rcall send_string  ; Вызов функции отправки строки
+;save the reason of interrupt in isr_flag
+    in r16, TIFR ; Read interrupt flags from TIFR
+    sbrc r16,OCF2 ; check for timer2 interrupt flag
+    ldi isr_flag,TIMER2_FLAG
+    sbrs r16,OCF2
+    sbrc r16,OCF1A ; check for timer1 interrupt flag
+    ldi isr_flag,TIMER1_FLAG
+;clear flags, in case they are set by some reason
+    out TIFR,r16
+    
+    
+; Jump table
+    cpi isr_flag,TIMER1_FLAG
+    breq TIMER1_ISR_DISPATCH
+    cpi isr_flag,TIMER2_FLAG
+    breq TIMER2_ISR_DISPATCH
+    rjmp COMMON_ISR_END
 
-    pop ZL            ; Восстановление регистров из стека
+TIMER1_ISR_DISPATCH:
+    ldi r24, high(ping_str*2)
+    ldi r25, low(ping_str*2)
+    mov ZH, r24
+    mov ZL, r25
+    rcall send_string
+    rjmp COMMON_ISR_END
+
+TIMER2_ISR_DISPATCH:
+    ldi r24, high(pong_str*2)
+    ldi r25, low(pong_str*2)
+    mov ZH, r24
+    mov ZL, r25
+    rcall send_string
+    
+COMMON_ISR_END:
+    pop ZL
     pop ZH
-    pop str_ptr_lo
-    pop str_ptr_hi
-    reti          ; Возврат из прерывания
-
-timer2_isr:
-    push str_ptr_hi      ; Сохранение регистров в стеке
-    push str_ptr_lo
-    push ZH
-    push ZL
-
-    ldi str_ptr_hi, high(pong_str*2)  ; Загрузка адреса строки "pong\r\n"
-    ldi str_ptr_lo, low(pong_str*2)
-    mov ZH, str_ptr_hi
-    mov ZL, str_ptr_lo
-    rcall send_string  ; Вызов функции отправки строки
-
-    pop ZL            ; Восстановление регистров из стека
-    pop ZH
-    pop str_ptr_lo
-    pop str_ptr_hi
-    reti          ; Возврат из прерывания
+    pop r25
+    pop r24
+    pop r18
+    pop r17
+    pop r16
+    reti
